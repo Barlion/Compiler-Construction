@@ -1,105 +1,162 @@
+class Token:
+    def __init__(self, type, value):
+        self.type = type
+        self.value = value
+
+    def __repr__(self):
+        return f"{self.type}: {self.value}"
+
+class Tokenizer:
+    def __init__(self, code):
+        self.tokens = []
+        self.position = 0
+        self.tokenize(code)
+
+    def tokenize(self, code):
+        i = 0
+        while i < len(code):
+            char = code[i]
+            if char.isspace():
+                i += 1
+            elif char.isalpha():
+                start = i
+                while i < len(code) and code[i].isalnum():
+                    i += 1
+                value = code[start:i]
+                if value == "if":
+                    self.tokens.append(Token("IF", value))
+                else:
+                    self.tokens.append(Token("IDENTIFIER", value))
+            elif char.isdigit():
+                start = i
+                while i < len(code) and code[i].isdigit():
+                    i += 1
+                value = code[start:i]
+                self.tokens.append(Token("NUMBER", value))
+            elif char == '>':
+                self.tokens.append(Token("GT", char))
+                i += 1
+            elif char == '=':
+                self.tokens.append(Token("ASSIGN", char))
+                i += 1
+            elif char == '-':
+                self.tokens.append(Token("MINUS", char))
+                i += 1
+            elif char == '(':
+                self.tokens.append(Token("LPAREN", char))
+                i += 1
+            elif char == ')':
+                self.tokens.append(Token("RPAREN", char))
+                i += 1
+            elif char == '{':
+                self.tokens.append(Token("LBRACE", char))
+                i += 1
+            elif char == '}':
+                self.tokens.append(Token("RBRACE", char))
+                i += 1
+            elif char == ';':
+                self.tokens.append(Token("SEMICOLON", char))
+                i += 1
+
+    def next_token(self):
+        if self.position < len(self.tokens):
+            token = self.tokens[self.position]
+            self.position += 1
+            return token
+        return None
+
+    def peek_token(self):
+        if self.position < len(self.tokens):
+            return self.tokens[self.position]
+        return None
+
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
-        self.current_index = 0
+        self.current_token = self.tokens.next_token()
+        self.temp_count = 1
+        self.intermediate_code = []
+        self.parse()
 
     def parse(self):
-        return self._parse_statements()
-
-    def _parse_statements(self):
-        statements = []
-        while self.current_index < len(self.tokens):
-            token = self._current_token()
-
-            # Stop parsing when we reach a closing brace
-            if token.type == 'RBRACE':
-                break
-
-            statement = self._parse_statement()
-            if statement is not None:
-                statements.append(statement)
-        return statements
-
-    def _parse_statement(self):
-        token = self._current_token()
-
-        print(f"Parsing token: {token.type}")
-
-        if token.type == 'EOF':
-            return None  # End of file or end of input
-        elif token.type == 'IF':
-            return self._parse_if()  # Handle if statement
-        elif token.type == 'IDENTIFIER':
-            return self._parse_assignment()  # Handle assignment for identifiers
-        else:
-            raise SyntaxError(f"Unexpected token: {token.type}")
+        if self.current_token and self.current_token.type == "IF":
+            print("Parsing if statement...")
+            self._parse_if()
 
     def _parse_if(self):
-        # Start parsing the 'if' statement
-        print("Parsing if statement...")
-        self._consume('IF')  # Consume the 'if' keyword
-        self._consume('LPAREN')  # Consume '(' for condition
-        condition = self._parse_expression()  # Parse the condition
-        self._consume('RPAREN')  # Consume ')' after condition
-        self._consume('LBRACE')  # Consume '{' for the body
-        body = self._parse_statements()  # Parse the body of the if statement
-        self._consume('RBRACE')  # Consume '}' after the block
-        return ('if', condition, body)
+        self._consume("IF")
+        self._consume("LPAREN")
+        left = self._consume("IDENTIFIER")
+        op = self._consume("GT")
+        right = self._consume("NUMBER")
+        self._consume("RPAREN")
+        temp_condition = self._new_temp()
+        self.intermediate_code.append(f"{temp_condition} = {left.value} {op.value} {right.value}")
+        self._consume("LBRACE")
+        body = self._parse_body()
+        self._consume("RBRACE")
+
+        # Adding labels for branching
+        label_true = self._new_label()
+        label_false = self._new_label()
+        self.intermediate_code.append(f"IF {temp_condition} GOTO {label_true}")
+        self.intermediate_code.append(f"GOTO {label_false}")
+        self.intermediate_code.append(f"{label_true}:")
+
+        # Add parsed body to intermediate code, with fix for tuple format
+        for stmt in body:
+            if isinstance(stmt, tuple) and stmt[0] == 'assign':
+                self.intermediate_code.append(f"{stmt[1]} = {stmt[2]}")
+            else:
+                self.intermediate_code.append(stmt)
+
+        self.intermediate_code.append(f"{label_false}:")
+
+        print("Parsed:", [('if', temp_condition, body)])
+        print("Intermediate Code:")
+        for line in self.intermediate_code:
+            print(line)
+
+    def _parse_body(self):
+        body = []
+        if self.current_token.type == "IDENTIFIER":
+            print("Parsing assignment...")
+            assignment = self._parse_assignment()
+            body.append(assignment)
+        return body
 
     def _parse_assignment(self):
-        # Start parsing an assignment
-        print("Parsing assignment...")
-        identifier = self._consume('IDENTIFIER')  # Consume the variable name
-        self._consume('ASSIGN')  # Expect '=' for assignment
-        expression = self._parse_expression()  # Parse the expression on the right-hand side
-        self._consume('SEMICOLON')  # Expect ';' at the end
-        return ('assign', identifier, expression)
+        left = self._consume("IDENTIFIER")
+        assign_op = self._consume("ASSIGN")
+        right = self._consume("IDENTIFIER")
+        operator = self._consume("MINUS")
+        value = self._consume("NUMBER")
+        self._consume("SEMICOLON")
+        temp_result = self._new_temp()
+        self.intermediate_code.append(f"{temp_result} = {right.value} {operator.value} {value.value}")
+        return ("assign", left.value, temp_result)
 
-    def _parse_expression(self):
-        # Expressions can be simple values or more complex terms
-        left = self._parse_term()
-        while self._current_token().type in ['GT', 'LT', 'PLUS', 'MINUS']:
-            operator = self._consume(self._current_token().type)  # Consume the operator
-            right = self._parse_term()  # Parse the right side
-            left = (operator, left, right)  # Construct an expression tree
-        return left
-
-    def _parse_term(self):
-        # Terms can be identifiers or numbers
-        token = self._current_token()
-        if token.type == 'IDENTIFIER':
-            return self._consume('IDENTIFIER')
-        elif token.type == 'NUMBER':
-            return self._consume('NUMBER')
-        else:
-            raise SyntaxError(f"Unexpected token in term: {token.type}")
-
-    def _current_token(self):
-        return self.tokens[self.current_index]
-
-    def _consume(self, token_type):
-        token = self._current_token()
-        print(f"Consuming token: {token.type}")
-        if token.type == token_type:
-            self.current_index += 1
+    def _consume(self, expected_type):
+        if self.current_token and self.current_token.type == expected_type:
+            token = self.current_token
+            print(f"Consuming token: {token.type}")
+            self.current_token = self.tokens.next_token()
             return token
         else:
-            raise SyntaxError(f"Expected {token_type} but got {token.type}")
+            raise SyntaxError(f"Expected token {expected_type} but got {self.current_token.type}")
 
-# Example usage of the parser
-if __name__ == "__main__":
-    from tokenizer import Tokenizer
+    def _new_temp(self):
+        temp = f"t{self.temp_count}"
+        self.temp_count += 1
+        return temp
 
-    # Example source code
-    source_code = "if (x > 5) { x = x - 1; }"
-    tokenizer = Tokenizer(source_code)
-    tokens = tokenizer.tokenize()
+    def _new_label(self):
+        label = f"L{self.temp_count}"
+        self.temp_count += 1
+        return label
 
-    # Create a parser object
-    parser = Parser(tokens)
-    try:
-        # Parse the token stream and print the result
-        parsed = parser.parse()
-        print(parsed)
-    except SyntaxError as e:
-        print(f"Error: {e}")
+# Sample usage with tokenizer and parser
+code = "if (x > 5) { x = x - 1; }"
+tokenizer = Tokenizer(code)
+tokens = tokenizer
+parser = Parser(tokens)
